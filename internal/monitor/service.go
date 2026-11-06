@@ -112,7 +112,7 @@ func (s *Service) Check(ctx context.Context) error {
 		if saveErr := s.Store.Save(ctx, state); saveErr != nil {
 			return saveErr
 		}
-		return err
+		return errors.Join(err, s.deliver(ctx, &state))
 	}
 	policy := Policy{
 		MissingFor: time.Duration(s.Config.MissingHours) * time.Hour,
@@ -123,9 +123,16 @@ func (s *Service) Check(ctx context.Context) error {
 	if err := s.Store.Save(ctx, state); err != nil {
 		return err
 	}
-	// Empty/stale batteries and API failures also suspend pending message retries.
-	if !state.Confirmed || !state.Eligible {
+	return s.deliver(ctx, &state)
+}
+
+func (s *Service) deliver(ctx context.Context, state *State) error {
+	// Eligibility gates new decisions, not delivery of an already confirmed event.
+	if !state.Confirmed {
 		return nil
+	}
+	if state.Delivered == nil {
+		state.Delivered = make(map[string]bool)
 	}
 	var failures []error
 	for _, target := range s.Config.Targets {
@@ -138,7 +145,7 @@ func (s *Service) Check(ctx context.Context) error {
 			continue
 		}
 		state.Delivered[target.ID] = true
-		if err := s.Store.Save(ctx, state); err != nil {
+		if err := s.Store.Save(ctx, *state); err != nil {
 			return err
 		}
 	}

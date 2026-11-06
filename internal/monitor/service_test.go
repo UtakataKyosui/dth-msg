@@ -156,3 +156,46 @@ func TestStorageFailurePreventsSend(t *testing.T) {
 		t.Fatal("storage failure ignored")
 	}
 }
+
+func TestConfirmedDeliverySurvivesMonitoringPause(t *testing.T) {
+	for _, reason := range []string{"battery_empty", "sync_stale", "health_api_unavailable"} {
+		t.Run(reason, func(t *testing.T) {
+			now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+			store := &memoryStore{state: State{
+				Confirmed: true, EventID: "existing-event", LastHeartRate: now.Add(-2 * time.Hour),
+				LastCheck: now.Add(-5 * time.Minute), Missing: time.Hour,
+				Messages: map[string]string{"discord": "farewell"},
+			}}
+			s, _ := NewService(fixtureConfig(), store)
+			s.Now = func() time.Time { return now }
+			sends := 0
+			s.HTTP.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host == "oauth2.googleapis.com" {
+					return response(200, `{"access_token":"test-access"}`), nil
+				}
+				if r.URL.Host == "discord.com" {
+					sends++
+					return response(204, ""), nil
+				}
+				if reason == "health_api_unavailable" {
+					return response(503, `{}`), nil
+				}
+				if strings.HasSuffix(r.URL.Path, "/pairedDevices") {
+					battery, sync := "Empty", now
+					if reason == "sync_stale" {
+						battery, sync = "High", now.Add(-3*time.Hour)
+					}
+					return response(200, `{"pairedDevices":[{"name":"users/me/pairedDevices/test","deviceType":"TRACKER","batteryStatus":"`+battery+`","lastSyncTime":"`+sync.Format(time.RFC3339)+`"}]}`), nil
+				}
+				return response(200, `{"dataPoints":[]}`), nil
+			})
+			err := s.Check(context.Background())
+			if (err != nil) != (reason == "health_api_unavailable") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if sends != 1 || !store.state.Delivered["discord"] || store.state.Eligible || store.state.Reason != reason || store.state.Missing != time.Hour {
+				t.Fatalf("pending delivery not preserved during pause: sends=%d state=%+v", sends, store.state)
+			}
+		})
+	}
+}

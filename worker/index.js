@@ -117,7 +117,7 @@ export class HealthMonitor {
       const result = await globalThis.dthRequest(
         config(this.env), state, request.method, path, body,
         request.headers.get("Authorization") ?? "",
-        (value) => this.state.storage.put("state", value),
+        async (value) => { await this.state.storage.put("state", value); },
       );
       return new Response(result.body, { status: result.status, headers });
     } catch {
