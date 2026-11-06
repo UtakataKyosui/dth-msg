@@ -1,0 +1,27 @@
+name = "dth-msg"
+main = "worker/index.js"
+compatibility_date = "2026-11-06"
+
+[build]
+command = "make wasm"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+MISSING_HOURS = "24"
+MAX_SYNC_AGE_MINUTES = "120"
+MAX_POLL_GAP_MINUTES = "15"
+
+[[durable_objects.bindings]]
+name = "MONITOR"
+class_name = "HealthMonitor"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["HealthMonitor"]
+
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true

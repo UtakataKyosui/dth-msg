@@ -1,0 +1,7 @@
+/build/
+/node_modules/
+/.wrangler/
+/.dev.vars
+/.env
+/state.json
+/state.json.tmp
