@@ -128,6 +128,37 @@ func providerResponse(provider string, scopes []string) *http.Response {
 	return response(200, string(body))
 }
 
+type forbiddenAuthStore struct{ t *testing.T }
+
+func (f forbiddenAuthStore) Load(context.Context) (State, error) {
+	f.t.Fatal("authorization preflight read storage")
+	return State{}, nil
+}
+func (f forbiddenAuthStore) Save(context.Context, State) error {
+	f.t.Fatal("authorization preflight wrote storage")
+	return nil
+}
+
+func TestAuthorizationPreflightIsStorageFreeAndUsesOriginalMethod(t *testing.T) {
+	s, key := clerkFixture(t, forbiddenAuthStore{t})
+	owner := sessionJWT(t, s, key, nil)
+	for _, scenario := range []struct {
+		bearer, origin string
+		want           int
+	}{
+		{"", "", 401},
+		{owner, s.Config.PublicURL, 200},
+		{owner, "https://evil.example.com", 403},
+		{owner, "", 403},
+		{s.Config.AdminToken, "", 200},
+	} {
+		w := authRequest(s, "PUT", "/auth/verify", "unread body", scenario.bearer, scenario.origin)
+		if w.Code != scenario.want {
+			t.Fatalf("preflight: got %d want %d", w.Code, scenario.want)
+		}
+	}
+}
+
 func TestClerkProviderRefreshWithoutBrowserAndDeviceListing(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	store := &memoryStore{}

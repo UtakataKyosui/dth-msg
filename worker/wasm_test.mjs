@@ -40,6 +40,10 @@ try {
   assert.equal((await run("GET", "/settings")).status, 401);
   assert.equal((await run("GET", "/settings", "", jwt("user_other"))).status, 401);
   const owner = jwt();
+  const beforePreflight = state;
+  assert.equal((await run("PUT", "/auth/verify", "", owner, config.publicUrl)).status, 200);
+  assert.equal(state, beforePreflight);
+  assert.equal((await run("PUT", "/auth/verify", "", owner, "https://evil.example.com")).status, 403);
   const settings = JSON.stringify({ deviceName: "users/me/pairedDevices/test", targets: [{ id: "slack", kind: "slack", url: "https://hooks.slack.com/services/test" }], messages: { slack: "fixture" } });
   assert.equal((await run("PUT", "/settings", settings, owner, "https://evil.example.com")).status, 403);
   assert.equal((await run("PUT", "/settings", settings, owner, config.publicUrl)).status, 200);

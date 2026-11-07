@@ -240,6 +240,12 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid origin"}`, http.StatusForbidden)
 		return
 	}
+	// Workers use this before reading an untrusted request body. This path must
+	// remain storage-free so authorization cannot wait behind monitoring work.
+	if r.URL.Path == "/auth/verify" {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+		return
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/check" {
 		if err := s.Check(r.Context()); err != nil {
 			http.Error(w, `{"error":"check failed; monitoring paused or delivery pending"}`, http.StatusBadGateway)
