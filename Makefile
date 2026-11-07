@@ -1,4 +1,21 @@
-.PHONY: test build wasm
+.PHONY: test build wasm fmt fmt-check lint
+
+GOLANGCI_LINT ?= golangci-lint
+
+fmt:
+	git ls-files -z -- '*.go' | xargs -0 gofmt -w
+
+fmt-check:
+	@unformatted=$$(git ls-files -z -- '*.go' | xargs -0 gofmt -l) || exit 1; \
+	if [ -n "$$unformatted" ]; then \
+		printf '%s\n' "$$unformatted"; \
+		printf '%s\n' 'Go files need formatting. Run make fmt.'; \
+		exit 1; \
+	fi
+
+lint:
+	$(GOLANGCI_LINT) run ./...
+	GOOS=js GOARCH=wasm $(GOLANGCI_LINT) run ./...
 
 test:
 	go test ./...

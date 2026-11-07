@@ -33,15 +33,19 @@ func (t Target) Validate() error {
 	switch t.Kind {
 	case "discord":
 		if host != "discord.com" || !strings.HasPrefix(u.Path, "/api/webhooks/") {
-			return errors.New("Discord target must be a discord.com webhook")
+			return errors.New("invalid Discord target: require a discord.com webhook")
 		}
 	case "slack":
 		if host != "hooks.slack.com" || !strings.HasPrefix(u.Path, "/services/") {
-			return errors.New("Slack target must be a hooks.slack.com webhook")
+			return errors.New("invalid Slack target: require a hooks.slack.com webhook")
 		}
 	case "mastodon":
 		if u.Path != "/api/v1/statuses" || t.Token == "" {
-			return errors.New("Mastodon requires /api/v1/statuses and an access token")
+			return errors.New("invalid Mastodon target: require /api/v1/statuses and an access token")
+		}
+	case "x":
+		if t.ID != "x" || t.URL != "https://api.x.com/2/tweets" || t.Token != "" {
+			return errors.New("invalid X target: require the linked account and fixed API endpoint")
 		}
 	default:
 		return errors.New("unsupported SNS kind")
@@ -62,6 +66,8 @@ func Deliver(ctx context.Context, client *http.Client, target Target, message, e
 		payload["text"] = message
 	case "mastodon":
 		payload["status"] = message
+	case "x":
+		payload["text"] = message
 	default:
 		return errors.New("unsupported SNS kind")
 	}
@@ -78,6 +84,9 @@ func Deliver(ctx context.Context, client *http.Client, target Target, message, e
 		req.Header.Set("Authorization", "Bearer "+target.Token)
 		req.Header.Set("Idempotency-Key", eventID+"-"+target.ID)
 	}
+	if target.Kind == "x" {
+		req.Header.Set("Authorization", "Bearer "+target.Token)
+	}
 	// Go's js/wasm transport delegates redirects to fetch.
 	if runtime.GOOS == "js" {
 		req.Header.Set("js.fetch:redirect", "error")
@@ -86,9 +95,20 @@ func Deliver(ctx context.Context, client *http.Client, target Target, message, e
 	if err != nil {
 		return errors.New("SNS transport failed")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return fmt.Errorf("SNS HTTP %d", res.StatusCode)
 	}
 	return nil
+}
+
+func messageLimit(kind string) int {
+	if kind == "mastodon" {
+		return 500
+	}
+	// Conservative limit: X counts some Unicode characters as two units.
+	if kind == "x" {
+		return 140
+	}
+	return 2000
 }

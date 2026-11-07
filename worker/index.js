@@ -1,5 +1,6 @@
 import "../build/wasm_exec.js";
 import wasm from "../build/monitor.wasm";
+import { readBody } from "./request-body.mjs";
 
 let started = false;
 function startGo() {
@@ -21,7 +22,15 @@ function config(env) {
     missingHours: Number(env.MISSING_HOURS ?? 24),
     syncMinutes: Number(env.MAX_SYNC_AGE_MINUTES ?? 120),
     pollMinutes: Number(env.MAX_POLL_GAP_MINUTES ?? 15),
-    targets: JSON.parse(env.SNS_TARGETS_JSON),
+    targets: JSON.parse(env.SNS_TARGETS_JSON ?? "[]"),
+    publicUrl: env.PUBLIC_URL,
+    clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY,
+    clerkJwtKey: env.CLERK_JWT_KEY,
+    clerkSecretKey: env.CLERK_SECRET_KEY,
+    ownerUserId: env.OWNER_CLERK_USER_ID,
+    discordClientId: env.DISCORD_CLIENT_ID,
+    discordClientSecret: env.DISCORD_CLIENT_SECRET,
+    enableX: env.ENABLE_X === "true",
   });
 }
 
@@ -29,29 +38,21 @@ function monitor(env) {
   return env.MONITOR.get(env.MONITOR.idFromName("owner"));
 }
 
-async function authorized(request, env) {
-  const value = request.headers.get("Authorization") ?? "";
-  if (!env.ADMIN_TOKEN || !value.startsWith("Bearer ")) return false;
-  const encoder = new TextEncoder();
-  const [got, want] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(value.slice(7))),
-    crypto.subtle.digest("SHA-256", encoder.encode(env.ADMIN_TOKEN)),
-  ]);
-  const a = new Uint8Array(got);
-  const b = new Uint8Array(want);
-  let difference = 0;
-  for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
-  return difference === 0;
+const jsonHeaders = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+const routes = new Set(["/", "/console.js", "/auth/config", "/devices", "/integrations/x", "/integrations/discord", "/integrations/discord/callback", "/settings", "/status", "/messages", "/check"]);
+const publicRoutes = new Set(["/", "/console.js", "/auth/config", "/integrations/discord/callback"]);
+
+function goResponse(result) {
+  const headers = new Headers();
+  for (const [name, values] of Object.entries(result.headers ?? jsonHeaders)) {
+    for (const value of Array.isArray(values) ? values : [values]) headers.append(name, value);
+  }
+  return new Response(result.body, { status: result.status, headers });
 }
 
 export default {
   async fetch(request, env) {
-    if (!await authorized(request, env)) {
-      return new Response('{"error":"unauthorized"}', {
-        status: 401,
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-      });
-    }
+    // All authorization, including Clerk JWTs and the owner allowlist, is enforced in Go.
     return monitor(env).fetch(request);
   },
   async scheduled(_event, env, ctx) {
@@ -72,56 +73,47 @@ export class HealthMonitor {
     this.queue = Promise.resolve();
   }
 
-  fetch(request) {
-    // Serialize the complete check, including outbound sends, across awaits.
-    const result = this.queue.then(() => this.handle(request));
-    this.queue = result.catch(() => {});
-    return result;
-  }
-
-  async handle(request) {
-    const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+  async fetch(request) {
     try {
       const path = new URL(request.url).pathname;
-      if (!["/status", "/messages", "/check"].includes(path)) {
-        return new Response('{"error":"not found"}', { status: 404, headers });
+      if (!routes.has(path)) {
+        return new Response('{"error":"not found"}', { status: 404, headers: jsonHeaders });
       }
-      // Bound the body before passing it across the Wasm boundary.
+      if (request.method !== "GET" || !publicRoutes.has(path)) {
+        // Use the same Go verifier for Clerk and admin tokens without touching
+        // storage, the request body, or the serialized monitoring queue.
+        const authorization = await this.runGo(request, "{}", "", "/auth/verify");
+        if (authorization.status !== 200) return goResponse(authorization);
+      }
       let body = "";
-      if (request.method === "PUT" && path === "/messages") {
-        const reader = request.body?.getReader();
-        const chunks = [];
-        let length = 0;
-        if (reader) {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            length += value.byteLength;
-            if (length > 32768) {
-              await reader.cancel();
-              return new Response('{"error":"body too large"}', { status: 413, headers });
-            }
-            chunks.push(value);
-          }
-        }
-        const bytes = new Uint8Array(length);
-        let offset = 0;
-        for (const chunk of chunks) {
-          bytes.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        body = new TextDecoder().decode(bytes);
+      if (request.method === "PUT" && ["/messages", "/settings"].includes(path)) {
+        body = await readBody(request, path === "/settings" ? 65536 : 32768);
       }
-      startGo();
-      const state = await this.state.storage.get("state") ?? "{}";
-      const result = await globalThis.dthRequest(
-        config(this.env), state, request.method, path, body,
-        request.headers.get("Authorization") ?? "",
-        async (value) => { await this.state.storage.put("state", value); },
-      );
-      return new Response(result.body, { status: result.status, headers });
-    } catch {
-      return new Response('{"error":"monitor unavailable"}', { status: 500, headers });
+      // Serialize state access and the complete check, including outbound sends.
+      const result = this.queue.then(() => this.handle(request, body));
+      this.queue = result.catch(() => {});
+      return await result;
+    } catch (error) {
+      const status = error.status === 408 || error.status === 413 ? error.status : 500;
+      const message = status === 408 ? "body read timed out" : status === 413 ? "body too large" : "monitor unavailable";
+      return new Response(JSON.stringify({ error: message }), { status, headers: jsonHeaders });
     }
+  }
+
+  async handle(request, body) {
+    const state = await this.state.storage.get("state") ?? "{}";
+    return goResponse(await this.runGo(request, state, body));
+  }
+
+  runGo(request, state, body, path) {
+    startGo();
+    const url = new URL(request.url);
+    return globalThis.dthRequest(
+      config(this.env), state, request.method, path ?? url.pathname + url.search, body,
+      request.headers.get("Authorization") ?? "",
+      path ? async () => { throw new Error("authorization must not write state"); }
+        : async (value) => { await this.state.storage.put("state", value); },
+      JSON.stringify({ cookie: request.headers.get("Cookie") ?? "", origin: request.headers.get("Origin") ?? "" }),
+    );
   }
 }

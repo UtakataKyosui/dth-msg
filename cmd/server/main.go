@@ -1,3 +1,5 @@
+//go:build !js
+
 package main
 
 import (
@@ -35,8 +37,11 @@ func main() {
 		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"), RefreshToken: os.Getenv("GOOGLE_REFRESH_TOKEN"),
 		DeviceName: os.Getenv("FITBIT_DEVICE_NAME"), MissingHours: number("MISSING_HOURS", "24"),
 		SyncMinutes: number("MAX_SYNC_AGE_MINUTES", "120"), PollMinutes: number("MAX_POLL_GAP_MINUTES", "15"),
+		PublicURL: os.Getenv("PUBLIC_URL"), ClerkPublishableKey: os.Getenv("CLERK_PUBLISHABLE_KEY"),
+		ClerkJWTKey: os.Getenv("CLERK_JWT_KEY"), ClerkSecretKey: os.Getenv("CLERK_SECRET_KEY"), OwnerUserID: os.Getenv("OWNER_CLERK_USER_ID"),
+		DiscordClientID: os.Getenv("DISCORD_CLIENT_ID"), DiscordClientSecret: os.Getenv("DISCORD_CLIENT_SECRET"), EnableX: env("ENABLE_X", "false") == "true",
 	}
-	if err := json.Unmarshal([]byte(os.Getenv("SNS_TARGETS_JSON")), &c.Targets); err != nil {
+	if err := json.Unmarshal([]byte(env("SNS_TARGETS_JSON", "[]")), &c.Targets); err != nil {
 		log.Fatal("SNS_TARGETS_JSON must be a target array")
 	}
 	s, err := monitor.NewService(c, monitor.FileStore{Path: env("STATE_FILE", "state.json")})

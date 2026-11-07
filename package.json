@@ -1,0 +1,11 @@
+{
+  "name": "dth-msg-worker",
+  "private": true,
+  "scripts": {
+    "test": "node --test worker/bridge_test.mjs scripts/worker-size.test.mjs",
+    "check:worker-size": "node scripts/check-worker-size.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.158.0"
+  }
+}
