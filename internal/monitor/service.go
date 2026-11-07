@@ -27,14 +27,14 @@ type Config struct {
 }
 
 func (c Config) Validate() error {
-	if len(c.AdminToken) < 32 || c.ClientID == "" || c.ClientSecret == "" || c.RefreshToken == "" || c.DeviceName == "" {
-		return errors.New("Google credentials, device name and an admin token of at least 32 bytes are required")
+	if len(c.AdminToken) < 32 || c.ClientID == "" || c.ClientSecret == "" || c.RefreshToken == "" {
+		return errors.New("Google credentials and an admin token of at least 32 bytes are required")
 	}
 	if c.MissingHours < 1 || c.MissingHours > 8760 || c.SyncMinutes < 1 || c.SyncMinutes > 1440 || c.PollMinutes < 1 || c.PollMinutes > 1440 {
 		return errors.New("invalid monitoring durations")
 	}
-	if len(c.Targets) == 0 || len(c.Targets) > 10 {
-		return errors.New("configure between 1 and 10 SNS targets")
+	if len(c.Targets) > 10 {
+		return errors.New("configure at most 10 SNS targets")
 	}
 	ids := map[string]bool{}
 	for _, target := range c.Targets {
@@ -91,6 +91,13 @@ func (s *Service) Check(ctx context.Context) error {
 		return err
 	}
 	now := s.Now().UTC()
+	settings := s.settings(state)
+	if settings.DeviceName == "" || len(settings.Targets) == 0 {
+		state.LastCheck, state.Eligible, state.Reason = now, false, "setup_required"
+		return s.Store.Save(ctx, state)
+	}
+	health := s.Health
+	health.DeviceName = settings.DeviceName
 	token, refresh, err := s.Health.Token(ctx, state.RefreshToken)
 	if err == nil && refresh != "" {
 		state.RefreshToken = refresh
@@ -105,7 +112,7 @@ func (s *Service) Check(ctx context.Context) error {
 		if !state.LastCheck.IsZero() && state.LastCheck.After(since) {
 			since = state.LastCheck.Add(-time.Hour)
 		}
-		observation, err = s.Health.Observe(ctx, token, since, now)
+		observation, err = health.Observe(ctx, token, since, now)
 	}
 	if err != nil {
 		state.LastCheck, state.Eligible, state.Reason = now, false, "health_api_unavailable"
@@ -135,7 +142,7 @@ func (s *Service) deliver(ctx context.Context, state *State) error {
 		state.Delivered = make(map[string]bool)
 	}
 	var failures []error
-	for _, target := range s.Config.Targets {
+	for _, target := range s.settings(*state).Targets {
 		message := state.Messages[target.ID]
 		if message == "" || state.Delivered[target.ID] {
 			continue
@@ -155,6 +162,9 @@ func (s *Service) deliver(ctx context.Context, state *State) error {
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	if serveConsole(w, r) {
+		return
+	}
 	got := sha256.Sum256([]byte(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
 	want := sha256.Sum256([]byte(s.Config.AdminToken))
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
@@ -177,6 +187,8 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == "/settings" && (r.Method == http.MethodGet || r.Method == http.MethodPut):
+		s.serveSettings(w, r, state)
 	case r.Method == http.MethodGet && r.URL.Path == "/status":
 		// Do not expose refresh tokens, message contents or target credentials.
 		_ = json.NewEncoder(w).Encode(struct {
@@ -205,7 +217,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		for id, message := range messages {
 			found := false
-			for _, target := range s.Config.Targets {
+			for _, target := range s.settings(state).Targets {
 				if target.ID == id {
 					found = true
 					limit := 2000

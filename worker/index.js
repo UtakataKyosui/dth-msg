@@ -21,7 +21,7 @@ function config(env) {
     missingHours: Number(env.MISSING_HOURS ?? 24),
     syncMinutes: Number(env.MAX_SYNC_AGE_MINUTES ?? 120),
     pollMinutes: Number(env.MAX_POLL_GAP_MINUTES ?? 15),
-    targets: JSON.parse(env.SNS_TARGETS_JSON),
+    targets: JSON.parse(env.SNS_TARGETS_JSON ?? "[]"),
   });
 }
 
@@ -46,7 +46,8 @@ async function authorized(request, env) {
 
 export default {
   async fetch(request, env) {
-    if (!await authorized(request, env)) {
+    const publicAsset = request.method === "GET" && ["/", "/console.js"].includes(new URL(request.url).pathname);
+    if (!publicAsset && !await authorized(request, env)) {
       return new Response('{"error":"unauthorized"}', {
         status: 401,
         headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
@@ -83,12 +84,12 @@ export class HealthMonitor {
     const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
     try {
       const path = new URL(request.url).pathname;
-      if (!["/status", "/messages", "/check"].includes(path)) {
+      if (!["/", "/console.js", "/settings", "/status", "/messages", "/check"].includes(path)) {
         return new Response('{"error":"not found"}', { status: 404, headers });
       }
       // Bound the body before passing it across the Wasm boundary.
       let body = "";
-      if (request.method === "PUT" && path === "/messages") {
+      if (request.method === "PUT" && ["/messages", "/settings"].includes(path)) {
         const reader = request.body?.getReader();
         const chunks = [];
         let length = 0;
@@ -97,7 +98,7 @@ export class HealthMonitor {
             const { done, value } = await reader.read();
             if (done) break;
             length += value.byteLength;
-            if (length > 32768) {
+            if (length > (path === "/settings" ? 65536 : 32768)) {
               await reader.cancel();
               return new Response('{"error":"body too large"}', { status: 413, headers });
             }
@@ -119,7 +120,7 @@ export class HealthMonitor {
         request.headers.get("Authorization") ?? "",
         async (value) => { await this.state.storage.put("state", value); },
       );
-      return new Response(result.body, { status: result.status, headers });
+      return new Response(result.body, { status: result.status, headers: result.headers ?? headers });
     } catch {
       return new Response('{"error":"monitor unavailable"}', { status: 500, headers });
     }

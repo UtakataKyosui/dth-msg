@@ -46,8 +46,8 @@ https://www.googleapis.com/auth/googlehealth.settings.readonly
 | `ADMIN_TOKEN` | 管理APIのBearerトークン。32バイト以上のランダムな値（例: `openssl rand -hex 32`） |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuthクライアント |
 | `GOOGLE_REFRESH_TOKEN` | 所有者のリフレッシュトークン |
-| `FITBIT_DEVICE_NAME` | APIが返す端末の完全なリソース名 |
-| `SNS_TARGETS_JSON` | 下記の送信先配列。1〜10件、IDは重複不可 |
+| `FITBIT_DEVICE_NAME` | APIが返す端末の完全なリソース名。コンソールから登録する場合は省略可 |
+| `SNS_TARGETS_JSON` | 下記の初期送信先配列。最大10件、IDは重複不可。コンソールから登録する場合は省略可 |
 | `MISSING_HOURS` | 欠落時間。既定`24`、1〜8760時間 |
 | `MAX_SYNC_AGE_MINUTES` | 同期情報の最大経過時間。既定`120`、1〜1440分 |
 | `MAX_POLL_GAP_MINUTES` | 加算するチェック間隔の上限。既定`15`、1〜1440分。通常は5分より大きく設定 |
@@ -98,6 +98,22 @@ npx wrangler@4.158.0 deploy
 ローカル確認は、上記変数を設定したGit管理対象外の`.dev.vars`を用意して`npx wrangler@4.158.0 dev --local`。デプロイせずバンドルだけ確認するには`npx wrangler@4.158.0 deploy --dry-run`。実際のGoogle認可・SNS配信には自分の資格情報が必要です。
 
 ## メッセージ登録・状態確認
+
+### 管理コンソール
+
+ブラウザでサーバーの `/`（ローカルは `http://127.0.0.1:8080/`）を開き、`ADMIN_TOKEN`で接続します。Go版・Workers版の両方で利用できます。GoogleのOAuth資格情報と管理トークンは引き続き環境変数で設定してください。端末と送信先の環境変数は省略でき、未登録の間は監視しません。Workersでも該当する2つの`secret put`は省略できます。
+
+- 対象Fitbitのリソース名を登録します（Google Health APIの`pairedDevices`が返す`TRACKER`の`name`）。対象は1台です。端末の自動取得・OAuth認可画面は含みません。
+- Discord・Slack・Mastodonの送信先と各メッセージを最大10件登録できます。空のメッセージの送信先には配信しません。Webhook URL・Mastodonトークンは画面ではマスクします。
+- 保存は端末・送信先・メッセージをまとめて置き換え、状態ストアに永続化します。保存した設定は環境変数の初期値より優先され、再起動後も有効です。保存操作自体は配信を行いません。
+- 端末変更時は監視の欠落時間と心拍の基準をリセットします。判定成立中は設定を変更できません。
+- 最終心拍・最終チェック・欠落時間・停止理由・配信済みIDを確認できます。
+
+管理トークンはブラウザのメモリ内だけで保持し、ログアウト・再読み込みで破棄します。画面とスクリプトは未認証でも取得できますが、設定・状態の読み書きにはBearer認証が必要です。`GET /settings`は認証した管理者に送信先の秘密情報とメッセージを返すため、HTTPSと管理画面へのアクセス制限を使用してください。設定は既存の状態ファイル（0600）またはDurable Objectストレージに保存します。
+
+### 管理API
+
+`GET /settings`で設定を取得、`PUT /settings`で`{"deviceName":"users/me/pairedDevices/…","targets":[…],"messages":{"送信先ID":"本文"}}`を保存できます。Bearer認証が必要です。
 
 `BASE_URL`（ローカルなら`http://127.0.0.1:8080`、WorkerならデプロイURL）と`ADMIN_TOKEN`を設定して実行します。以下は登録した全メッセージを置き換えます。登録しない送信先には配信しません。
 

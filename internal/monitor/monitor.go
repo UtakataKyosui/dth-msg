@@ -7,6 +7,7 @@ import (
 )
 
 type State struct {
+	Settings      *Settings         `json:"settings,omitempty"`
 	LastHeartRate time.Time         `json:"lastHeartRate"`
 	LastCheck     time.Time         `json:"lastCheck"`
 	Missing       time.Duration     `json:"missing"`

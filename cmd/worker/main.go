@@ -66,7 +66,11 @@ func main() {
 				req.Header.Set("Authorization", args[5].String())
 				res := httptest.NewRecorder()
 				service.ServeHTTP(res, req)
-				resolve.Invoke(map[string]any{"status": res.Code, "body": res.Body.String()})
+				headers := map[string]any{}
+				for key := range res.Header() {
+					headers[key] = res.Header().Get(key)
+				}
+				resolve.Invoke(map[string]any{"status": res.Code, "body": res.Body.String(), "headers": headers})
 			}()
 			return nil
 		})

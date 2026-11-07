@@ -36,7 +36,7 @@ func main() {
 		DeviceName: os.Getenv("FITBIT_DEVICE_NAME"), MissingHours: number("MISSING_HOURS", "24"),
 		SyncMinutes: number("MAX_SYNC_AGE_MINUTES", "120"), PollMinutes: number("MAX_POLL_GAP_MINUTES", "15"),
 	}
-	if err := json.Unmarshal([]byte(os.Getenv("SNS_TARGETS_JSON")), &c.Targets); err != nil {
+	if err := json.Unmarshal([]byte(env("SNS_TARGETS_JSON", "[]")), &c.Targets); err != nil {
 		log.Fatal("SNS_TARGETS_JSON must be a target array")
 	}
 	s, err := monitor.NewService(c, monitor.FileStore{Path: env("STATE_FILE", "state.json")})
