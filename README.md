@@ -165,6 +165,8 @@ npm run check:worker-size
 
 `build/worker-size.json`に全体・Wasm・各モジュールのサイズを記録します。厳しい独自上限を設ける場合は`WORKER_MAX_BYTES`でバイト数を指定できます（64 MiBを超える設定は不可）。GitHub ActionsのCIではGo/Node/Wranglerを指定したバージョンでビルドし、PRとmainへのpushでテスト・サイズ検査・実Wasmの認証検証を実行します。結果はActionsのサマリーとartifactに保存します。Cloudflareの資格情報は不要で、アップロード・デプロイは行いません。
 
+Goのモジュールとビルドキャッシュ（ネイティブ・race・Wasmを含む）は`setup-go`で復元・保存し、`go.mod`と`go.sum`で依存変更を判定します。npmは`package-lock.json`をキーにパッケージ取得キャッシュを復元し、`npm ci --prefer-offline`で利用します。`node_modules`や`build/`の完成済みバンドルはキャッシュしません。golangci-lintの解析キャッシュも公式Actionで保存します。単一ジョブで共有し、重複するGo環境のセットアップとビルドを避けています。
+
 サイズ内でも、WorkersのCPU・メモリ・起動時間や実行時のAPI制限まで保証するものではありません。
 
 Workersでは管理APIの認証を本文の読み取りより先に実行し、本文は監視キューの外で読み取ります。設定本文は64 KiB、メッセージ本文は32 KiB、読み取り全体は10秒までです。送信を途中で止めたリクエストがあっても、後続の監視チェックを妨げません。状態へのアクセスと配信処理は引き続き直列化します。
@@ -202,6 +204,16 @@ curl --fail-with-body -X POST "$BASE_URL/check" -H "$(printf 'Authorization: %s 
 メッセージは非空、Discord/Slackは2000文字、Mastodonは500文字、Xは140文字までです（実際のサービス側制限は別途適用）。判定成立後は内容をロックし、新しい心拍数を受信するまで変更できません。`/status`は最終心拍時刻・欠落秒数・停止理由・`suspectedDeath`・配信済みID・X投稿試行回数を返し、トークンやメッセージを返しません。管理APIはBearer認証、Discordの認可コールバックは一度限りのstateとブラウザCookieで保護します。
 
 ## テスト
+
+Goの静的解析には`.golangci-lint-version`で固定したgolangci-lint v2.15.0を使います。[公式手順](https://golangci-lint.run/docs/welcome/install/local/)で同じバージョンを用意してから、次のコマンドでCIと同じ検査を実行できます。
+
+```sh
+make fmt-check # gofmtの未整形ファイルがあれば失敗。ファイルは変更しない
+make lint      # errcheck / govet / ineffassign / staticcheck / unusedをnative・js/wasmで実行
+make fmt       # 必要な場合にgofmtで整形する
+```
+
+CIはFormat・Lint・テストを別々のステップで実行します。`govet`はgolangci-lintに含め、CIでの単独実行は省略します。
 
 ```sh
 go test ./internal/monitor -count=1

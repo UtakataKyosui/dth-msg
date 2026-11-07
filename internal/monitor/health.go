@@ -59,7 +59,7 @@ func (h HealthClient) json(req *http.Request, result any) error {
 		// Transport errors may contain credential-bearing URLs.
 		return errors.New("upstream transport failed")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return fmt.Errorf("upstream HTTP %d", res.StatusCode)
 	}

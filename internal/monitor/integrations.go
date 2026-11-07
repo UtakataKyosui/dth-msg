@@ -57,12 +57,12 @@ func (s *Service) serveIntegrations(w http.ResponseWriter, r *http.Request, stat
 			}
 		}
 		if err != nil {
-			http.Error(w, `{"error":"Google連携とHealth読み取り権限を確認してください"}`, 502)
+			http.Error(w, `{"error":"Google連携とHealth読み取り権限を確認してください"}`, http.StatusBadGateway)
 			return true
 		}
 		devices, err := s.Health.Devices(r.Context(), token)
 		if err != nil {
-			http.Error(w, `{"error":"端末一覧を取得できませんでした"}`, 502)
+			http.Error(w, `{"error":"端末一覧を取得できませんでした"}`, http.StatusBadGateway)
 			return true
 		}
 		_ = json.NewEncoder(w).Encode(devices)
@@ -73,15 +73,15 @@ func (s *Service) serveIntegrations(w http.ResponseWriter, r *http.Request, stat
 			return true
 		}
 		if state.Confirmed {
-			http.Error(w, `{"error":"判定成立中は変更できません"}`, 409)
+			http.Error(w, `{"error":"判定成立中は変更できません"}`, http.StatusConflict)
 			return true
 		}
 		if _, err := s.providerToken(r.Context(), "oauth_x", []string{"tweet.write", "offline.access"}); err != nil {
-			http.Error(w, `{"error":"Clerkのアカウント設定でXを連携し、投稿権限を許可してください"}`, 502)
+			http.Error(w, `{"error":"Clerkのアカウント設定でXを連携し、投稿権限を許可してください"}`, http.StatusBadGateway)
 			return true
 		}
 		if err := s.addLinkedTarget(r, state, Target{ID: "x", Kind: "x", URL: "https://api.x.com/2/tweets"}); err != nil {
-			http.Error(w, `{"error":"送信先を保存できませんでした（最大10件）"}`, 409)
+			http.Error(w, `{"error":"送信先を保存できませんでした（最大10件）"}`, http.StatusConflict)
 			return true
 		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -92,11 +92,11 @@ func (s *Service) serveIntegrations(w http.ResponseWriter, r *http.Request, stat
 			return true
 		}
 		if state.Confirmed {
-			http.Error(w, `{"error":"判定成立中は変更できません"}`, 409)
+			http.Error(w, `{"error":"判定成立中は変更できません"}`, http.StatusConflict)
 			return true
 		}
 		if len(s.settings(*state).Targets) >= 10 {
-			http.Error(w, `{"error":"送信先は最大10件です"}`, 409)
+			http.Error(w, `{"error":"送信先は最大10件です"}`, http.StatusConflict)
 			return true
 		}
 		nonce, err := randomToken()
@@ -173,7 +173,7 @@ func (s *Service) discordCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, s.discordCookie("", -1))
 	if state.Confirmed {
-		http.Error(w, `{"error":"判定成立中は変更できません"}`, 409)
+		http.Error(w, `{"error":"判定成立中は変更できません"}`, http.StatusConflict)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -184,7 +184,7 @@ func (s *Service) discordCallback(w http.ResponseWriter, r *http.Request) {
 	form := url.Values{"client_id": {s.Config.DiscordClientID}, "client_secret": {s.Config.DiscordClientSecret}, "grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {s.Config.PublicURL + "/integrations/discord/callback"}}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "https://discord.com/api/oauth2/token", strings.NewReader(form.Encode()))
 	if err != nil {
-		http.Error(w, `{"error":"Discord連携に失敗しました"}`, 502)
+		http.Error(w, `{"error":"Discord連携に失敗しました"}`, http.StatusBadGateway)
 		return
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -195,12 +195,12 @@ func (s *Service) discordCallback(w http.ResponseWriter, r *http.Request) {
 		} `json:"webhook"`
 	}
 	if s.Health.json(req, &result) != nil {
-		http.Error(w, `{"error":"Discord連携に失敗しました。再度お試しください"}`, 502)
+		http.Error(w, `{"error":"Discord連携に失敗しました。再度お試しください"}`, http.StatusBadGateway)
 		return
 	}
 	target := Target{ID: "discord-" + result.Webhook.ID, Kind: "discord", URL: result.Webhook.URL}
 	if result.Webhook.ID == "" || target.Validate() != nil {
-		http.Error(w, `{"error":"Discordから有効なWebhookを取得できませんでした"}`, 502)
+		http.Error(w, `{"error":"Discordから有効なWebhookを取得できませんでした"}`, http.StatusBadGateway)
 		return
 	}
 	if s.addLinkedTarget(r, &state, target) != nil {

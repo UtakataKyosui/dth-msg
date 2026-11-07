@@ -198,7 +198,7 @@ func (s *Service) deliver(ctx context.Context, state *State) error {
 			}
 			token, err := s.providerToken(ctx, "oauth_x", []string{"tweet.write", "offline.access"})
 			if err != nil {
-				failures = append(failures, errors.New("X authorization unavailable"))
+				failures = append(failures, errors.New("unavailable X authorization"))
 				continue
 			}
 			target.Token = token

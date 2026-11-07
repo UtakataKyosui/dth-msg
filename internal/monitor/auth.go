@@ -26,16 +26,20 @@ type clerkAuth struct{ key *clerk.JSONWebKey }
 func (c Config) validateAuth() error {
 	if c.ClerkPublishableKey == "" {
 		if c.ClerkSecretKey != "" || c.ClerkJWTKey != "" || c.OwnerUserID != "" || c.EnableX {
-			return errors.New("Clerk configuration is incomplete")
+			return errors.New("incomplete Clerk configuration")
 		}
 		return nil
 	}
 	u, err := url.Parse(c.PublicURL)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) {
+	if err != nil {
+		return errors.New("PUBLIC_URL must be an HTTPS origin (HTTP allowed only on localhost)")
+	}
+	localHTTP := u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1")
+	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" || (u.Scheme != "https" && !localHTTP) {
 		return errors.New("PUBLIC_URL must be an HTTPS origin (HTTP allowed only on localhost)")
 	}
 	if c.ClerkSecretKey == "" || c.ClerkJWTKey == "" || !strings.HasPrefix(c.OwnerUserID, "user_") {
-		return errors.New("Clerk secret key, JWT public key and owner user ID are required")
+		return errors.New("configure the Clerk secret key, JWT public key and owner user ID")
 	}
 	return nil
 }
@@ -62,7 +66,7 @@ func (s *Service) initAuth() error {
 		return errors.New("invalid Clerk JWT public key")
 	}
 	if public, ok := key.Key.(*rsa.PublicKey); !ok || public.N.BitLen() < 2048 {
-		return errors.New("Clerk JWT key must be an RSA public key of at least 2048 bits")
+		return errors.New("invalid Clerk JWT key: require an RSA public key of at least 2048 bits")
 	}
 	s.auth, s.clerkOrigin = &clerkAuth{key: key}, "https://"+host
 	return nil
@@ -97,7 +101,7 @@ func (s *Service) providerToken(ctx context.Context, provider string, scopes []s
 
 func (s *Service) providerCredential(ctx context.Context, provider string, scopes []string) (*clerk.OAuthAccessToken, error) {
 	if s.auth == nil {
-		return nil, errors.New("Clerk is not configured")
+		return nil, errors.New("missing Clerk configuration")
 	}
 	client := user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{Key: clerk.String(s.Config.ClerkSecretKey), HTTPClient: s.HTTP}})
 	list, err := client.ListOAuthAccessTokens(ctx, &user.ListOAuthAccessTokensParams{ID: s.Config.OwnerUserID, Provider: provider})
@@ -126,12 +130,12 @@ func (s *Service) clerkHealthToken(ctx context.Context, state *State) (string, e
 		return "", err
 	}
 	if credential.ExternalAccountID == "" {
-		return "", errors.New("Google account identity missing")
+		return "", errors.New("missing Google account identity")
 	}
 	if state.GoogleAccountID != credential.ExternalAccountID {
 		// Never carry a monitoring baseline across Google accounts, including first migration.
 		if state.Confirmed {
-			return "", errors.New("Google account changed during a confirmed event")
+			return "", errors.New("cannot change Google account during a confirmed event")
 		}
 		state.LastHeartRate, state.LastCheck = time.Time{}, time.Time{}
 		state.Missing, state.Eligible, state.EventID, state.Delivered, state.XAttempts = 0, false, "", nil, 0
