@@ -27,13 +27,16 @@ func (s *Service) settings(state State) Settings {
 	return settings
 }
 
-func serveConsole(w http.ResponseWriter, r *http.Request) bool {
+func (s *Service) serveConsole(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet || (r.URL.Path != "/" && r.URL.Path != "/console.js") {
 		return false
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	if s.clerkOrigin != "" {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self' "+s.clerkOrigin+" https://challenges.cloudflare.com https://*.protect.clerk.com; style-src 'self' 'unsafe-inline'; connect-src 'self' "+s.clerkOrigin+" https://*.protect.clerk.com:* https://clerk-telemetry.com https://*.clerk-telemetry.com; img-src 'self' https://img.clerk.com data:; font-src "+s.clerkOrigin+"; frame-src 'self' "+s.clerkOrigin+" https://challenges.cloudflare.com https://*.protect.clerk.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	}
 	if r.URL.Path == "/console.js" {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = io.WriteString(w, consoleJS)
@@ -74,10 +77,11 @@ func (s *Service) serveSettings(w http.ResponseWriter, r *http.Request, state St
 			http.Error(w, `{"error":"送信先の種類・HTTPS URL・トークンを確認してください"}`, http.StatusBadRequest)
 			return
 		}
-		limit := 2000
-		if target.Kind == "mastodon" {
-			limit = 500
+		if target.Kind == "x" && (!s.Config.EnableX || s.Config.ClerkPublishableKey == "") {
+			http.Error(w, `{"error":"X連携は有効になっていません"}`, http.StatusBadRequest)
+			return
 		}
+		limit := messageLimit(target.Kind)
 		message := settings.Messages[target.ID]
 		if ids[target.ID] || (message != "" && (strings.TrimSpace(message) == "" || !utf8.ValidString(message) || utf8.RuneCountInString(message) > limit)) {
 			http.Error(w, `{"error":"送信先IDの重複またはメッセージの文字数が不正です"}`, http.StatusBadRequest)
@@ -93,11 +97,14 @@ func (s *Service) serveSettings(w http.ResponseWriter, r *http.Request, state St
 	}
 	if settings.DeviceName != s.settings(state).DeviceName {
 		// A different device must establish its own monitoring baseline.
-		state = State{RefreshToken: state.RefreshToken}
+		state = State{RefreshToken: state.RefreshToken, OwnerUserID: state.OwnerUserID, GoogleAccountID: state.GoogleAccountID, DiscordOAuth: state.DiscordOAuth}
 	}
 	state.Messages = settings.Messages
 	settings.Messages = nil
 	state.Settings = &settings
+	if s.Config.ClerkPublishableKey != "" {
+		state.OwnerUserID = s.Config.OwnerUserID
+	}
 	if s.Store.Save(r.Context(), state) != nil {
 		http.Error(w, `{"error":"設定を保存できませんでした"}`, http.StatusInternalServerError)
 		return

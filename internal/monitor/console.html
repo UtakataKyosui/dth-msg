@@ -12,13 +12,15 @@
 <p id="notice" role="status" hidden></p>
 <section id="login">
 <h2>管理者ログイン</h2>
+<div id="clerk-sign-in" hidden></div>
 <form id="login-form"><label for="admin-token">ADMIN_TOKEN</label><input id="admin-token" type="password" required autocomplete="off"><p class="muted">トークンはこの画面を開いている間だけメモリに保持します。</p><button>接続</button></form>
 </section>
 <main id="console" hidden>
 <button id="logout" type="button">ログアウト</button>
+<section id="integrations" hidden><h2>アカウント連携</h2><p>GoogleとXはアカウント設定から連携できます。GoogleではHealthデータの読み取り権限も許可してください。</p><button id="account" type="button">アカウント設定</button><button id="discord-connect" type="button" hidden>Discordの投稿先を選ぶ</button><button id="x-connect" type="button" hidden>Xを送信先に追加</button><p class="muted">Xは任意です。投稿にはAPI利用料がかかります。リンク先での連携後はこの画面を再読み込みしてください。連携を始める前に編集中の設定を保存してください。</p></section>
 <section><h2>監視状態</h2><pre id="status"></pre><button id="refresh" type="button">状態を更新</button></section>
 <form id="settings-form">
-<section><h2>対象デバイス</h2><label for="device">Fitbitのリソース名</label><input id="device" placeholder="users/me/pairedDevices/…" required><p class="muted">Google Health APIのpairedDevicesが返すTRACKERのnameを入力してください。監視対象は1台です。変更すると欠落時間をリセットし、新しい心拍を待ちます。同じアカウントの複数ウェアラブルの心拍は区別されません。</p></section>
+<section><h2>対象デバイス</h2><button id="load-devices" type="button">Fitbit端末を取得</button><label for="device-list">取得した端末</label><select id="device-list"><option value="">端末を取得して選択してください</option></select><label for="device">Fitbitのリソース名</label><input id="device" placeholder="users/me/pairedDevices/…" required><p class="muted">監視対象は1台です。変更すると欠落時間をリセットし、新しい心拍を待ちます。同じアカウントの複数ウェアラブルの心拍は区別されません。</p></section>
 <section><h2>送信先とメッセージ</h2><p class="muted">最大10件。メッセージを空にすると、その送信先には配信しません。Webhook URLとアクセストークンは秘密情報です。</p><div id="targets"></div><button id="add" type="button">送信先を追加</button></section>
 <button id="save" type="submit">設定を保存</button><p class="muted">保存は全設定を置き換えます。保存ボタンから実際のメッセージは送信しません。判定成立中は設定を変更できません。</p>
 </form>

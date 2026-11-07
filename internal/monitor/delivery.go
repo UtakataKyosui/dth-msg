@@ -43,6 +43,10 @@ func (t Target) Validate() error {
 		if u.Path != "/api/v1/statuses" || t.Token == "" {
 			return errors.New("Mastodon requires /api/v1/statuses and an access token")
 		}
+	case "x":
+		if t.ID != "x" || t.URL != "https://api.x.com/2/tweets" || t.Token != "" {
+			return errors.New("X targets must use the linked account and fixed API endpoint")
+		}
 	default:
 		return errors.New("unsupported SNS kind")
 	}
@@ -62,6 +66,8 @@ func Deliver(ctx context.Context, client *http.Client, target Target, message, e
 		payload["text"] = message
 	case "mastodon":
 		payload["status"] = message
+	case "x":
+		payload["text"] = message
 	default:
 		return errors.New("unsupported SNS kind")
 	}
@@ -78,6 +84,9 @@ func Deliver(ctx context.Context, client *http.Client, target Target, message, e
 		req.Header.Set("Authorization", "Bearer "+target.Token)
 		req.Header.Set("Idempotency-Key", eventID+"-"+target.ID)
 	}
+	if target.Kind == "x" {
+		req.Header.Set("Authorization", "Bearer "+target.Token)
+	}
 	// Go's js/wasm transport delegates redirects to fetch.
 	if runtime.GOOS == "js" {
 		req.Header.Set("js.fetch:redirect", "error")
@@ -91,4 +100,15 @@ func Deliver(ctx context.Context, client *http.Client, target Target, message, e
 		return fmt.Errorf("SNS HTTP %d", res.StatusCode)
 	}
 	return nil
+}
+
+func messageLimit(kind string) int {
+	if kind == "mastodon" {
+		return 500
+	}
+	// Conservative limit: X counts some Unicode characters as two units.
+	if kind == "x" {
+		return 140
+	}
+	return 2000
 }

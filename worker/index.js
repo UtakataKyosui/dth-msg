@@ -22,6 +22,14 @@ function config(env) {
     syncMinutes: Number(env.MAX_SYNC_AGE_MINUTES ?? 120),
     pollMinutes: Number(env.MAX_POLL_GAP_MINUTES ?? 15),
     targets: JSON.parse(env.SNS_TARGETS_JSON ?? "[]"),
+    publicUrl: env.PUBLIC_URL,
+    clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY,
+    clerkJwtKey: env.CLERK_JWT_KEY,
+    clerkSecretKey: env.CLERK_SECRET_KEY,
+    ownerUserId: env.OWNER_CLERK_USER_ID,
+    discordClientId: env.DISCORD_CLIENT_ID,
+    discordClientSecret: env.DISCORD_CLIENT_SECRET,
+    enableX: env.ENABLE_X === "true",
   });
 }
 
@@ -29,30 +37,9 @@ function monitor(env) {
   return env.MONITOR.get(env.MONITOR.idFromName("owner"));
 }
 
-async function authorized(request, env) {
-  const value = request.headers.get("Authorization") ?? "";
-  if (!env.ADMIN_TOKEN || !value.startsWith("Bearer ")) return false;
-  const encoder = new TextEncoder();
-  const [got, want] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(value.slice(7))),
-    crypto.subtle.digest("SHA-256", encoder.encode(env.ADMIN_TOKEN)),
-  ]);
-  const a = new Uint8Array(got);
-  const b = new Uint8Array(want);
-  let difference = 0;
-  for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
-  return difference === 0;
-}
-
 export default {
   async fetch(request, env) {
-    const publicAsset = request.method === "GET" && ["/", "/console.js"].includes(new URL(request.url).pathname);
-    if (!publicAsset && !await authorized(request, env)) {
-      return new Response('{"error":"unauthorized"}', {
-        status: 401,
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-      });
-    }
+    // All authorization, including Clerk JWTs and the owner allowlist, is enforced in Go.
     return monitor(env).fetch(request);
   },
   async scheduled(_event, env, ctx) {
@@ -83,8 +70,9 @@ export class HealthMonitor {
   async handle(request) {
     const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
     try {
-      const path = new URL(request.url).pathname;
-      if (!["/", "/console.js", "/settings", "/status", "/messages", "/check"].includes(path)) {
+      const url = new URL(request.url);
+      const path = url.pathname;
+      if (!["/", "/console.js", "/auth/config", "/devices", "/integrations/x", "/integrations/discord", "/integrations/discord/callback", "/settings", "/status", "/messages", "/check"].includes(path)) {
         return new Response('{"error":"not found"}', { status: 404, headers });
       }
       // Bound the body before passing it across the Wasm boundary.
@@ -116,11 +104,16 @@ export class HealthMonitor {
       startGo();
       const state = await this.state.storage.get("state") ?? "{}";
       const result = await globalThis.dthRequest(
-        config(this.env), state, request.method, path, body,
+        config(this.env), state, request.method, path + url.search, body,
         request.headers.get("Authorization") ?? "",
         async (value) => { await this.state.storage.put("state", value); },
+        JSON.stringify({ cookie: request.headers.get("Cookie") ?? "", origin: request.headers.get("Origin") ?? "" }),
       );
-      return new Response(result.body, { status: result.status, headers: result.headers ?? headers });
+      const responseHeaders = new Headers();
+      for (const [name, values] of Object.entries(result.headers ?? headers)) {
+        for (const value of Array.isArray(values) ? values : [values]) responseHeaders.append(name, value);
+      }
+      return new Response(result.body, { status: result.status, headers: responseHeaders });
     } catch {
       return new Response('{"error":"monitor unavailable"}', { status: 500, headers });
     }

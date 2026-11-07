@@ -64,11 +64,22 @@ func main() {
 				}
 				req := httptest.NewRequest(args[2].String(), "https://internal"+args[3].String(), strings.NewReader(args[4].String()))
 				req.Header.Set("Authorization", args[5].String())
+				if len(args) > 7 {
+					var headers map[string]string
+					if json.Unmarshal([]byte(args[7].String()), &headers) == nil {
+						req.Header.Set("Cookie", headers["cookie"])
+						req.Header.Set("Origin", headers["origin"])
+					}
+				}
 				res := httptest.NewRecorder()
 				service.ServeHTTP(res, req)
 				headers := map[string]any{}
-				for key := range res.Header() {
-					headers[key] = res.Header().Get(key)
+				for key, values := range res.Header() {
+					items := make([]any, len(values))
+					for i, value := range values {
+						items[i] = value
+					}
+					headers[key] = items
 				}
 				resolve.Invoke(map[string]any{"status": res.Code, "body": res.Body.String(), "headers": headers})
 			}()

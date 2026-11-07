@@ -78,31 +78,31 @@ func (h HealthClient) get(ctx context.Context, token, path string, query url.Val
 	return h.json(req, result)
 }
 
-func (h HealthClient) Observe(ctx context.Context, token string, since, now time.Time) (Observation, error) {
-	var o Observation
-	found := false
+type Device struct {
+	Name    string    `json:"name"`
+	Type    string    `json:"deviceType"`
+	Battery string    `json:"batteryStatus"`
+	Level   *int      `json:"batteryLevel"`
+	Sync    time.Time `json:"lastSyncTime"`
+}
+
+func (h HealthClient) Devices(ctx context.Context, token string) ([]Device, error) {
+	devices := []Device{}
 	query := url.Values{"pageSize": {"100"}}
 	for page := 0; ; page++ {
 		if page >= 100 {
-			return o, errors.New("too many device pages")
+			return nil, errors.New("too many device pages")
 		}
 		var result struct {
-			Devices []struct {
-				Name    string    `json:"name"`
-				Type    string    `json:"deviceType"`
-				Battery string    `json:"batteryStatus"`
-				Level   *int      `json:"batteryLevel"`
-				Sync    time.Time `json:"lastSyncTime"`
-			} `json:"pairedDevices"`
-			Next string `json:"nextPageToken"`
+			Devices []Device `json:"pairedDevices"`
+			Next    string   `json:"nextPageToken"`
 		}
 		if err := h.get(ctx, token, "/users/me/pairedDevices", query, &result); err != nil {
-			return o, err
+			return nil, err
 		}
 		for _, d := range result.Devices {
-			if d.Name == h.DeviceName && d.Type == "TRACKER" {
-				o.Sync, o.Battery, o.Level = d.Sync, d.Battery, d.Level
-				found = true
+			if d.Type == "TRACKER" {
+				devices = append(devices, d)
 			}
 		}
 		if result.Next == "" {
@@ -110,10 +110,26 @@ func (h HealthClient) Observe(ctx context.Context, token string, since, now time
 		}
 		query.Set("pageToken", result.Next)
 	}
+	return devices, nil
+}
+
+func (h HealthClient) Observe(ctx context.Context, token string, since, now time.Time) (Observation, error) {
+	var o Observation
+	devices, err := h.Devices(ctx, token)
+	if err != nil {
+		return o, err
+	}
+	found := false
+	for _, d := range devices {
+		if d.Name == h.DeviceName {
+			o.Sync, o.Battery, o.Level = d.Sync, d.Battery, d.Level
+			found = true
+		}
+	}
 	if !found {
 		return o, errors.New("configured Fitbit tracker not found")
 	}
-	query = url.Values{
+	query := url.Values{
 		"pageSize":         {"10000"},
 		"dataSourceFamily": {"users/me/dataSourceFamilies/google-wearables"},
 		"filter": {fmt.Sprintf(`heart_rate.sample_time.physical_time >= "%s" AND heart_rate.sample_time.physical_time < "%s"`,

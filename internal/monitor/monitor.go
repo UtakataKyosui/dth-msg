@@ -7,17 +7,21 @@ import (
 )
 
 type State struct {
-	Settings      *Settings         `json:"settings,omitempty"`
-	LastHeartRate time.Time         `json:"lastHeartRate"`
-	LastCheck     time.Time         `json:"lastCheck"`
-	Missing       time.Duration     `json:"missing"`
-	Eligible      bool              `json:"eligible"`
-	Reason        string            `json:"reason"`
-	Confirmed     bool              `json:"confirmed"`
-	EventID       string            `json:"eventId,omitempty"`
-	Delivered     map[string]bool   `json:"delivered"`
-	Messages      map[string]string `json:"messages"`
-	RefreshToken  string            `json:"refreshToken,omitempty"`
+	GoogleAccountID string            `json:"googleAccountId,omitempty"`
+	OwnerUserID     string            `json:"ownerUserId,omitempty"`
+	DiscordOAuth    *OAuthPending     `json:"discordOAuth,omitempty"`
+	XAttempts       int               `json:"xAttempts,omitempty"`
+	Settings        *Settings         `json:"settings,omitempty"`
+	LastHeartRate   time.Time         `json:"lastHeartRate"`
+	LastCheck       time.Time         `json:"lastCheck"`
+	Missing         time.Duration     `json:"missing"`
+	Eligible        bool              `json:"eligible"`
+	Reason          string            `json:"reason"`
+	Confirmed       bool              `json:"confirmed"`
+	EventID         string            `json:"eventId,omitempty"`
+	Delivered       map[string]bool   `json:"delivered"`
+	Messages        map[string]string `json:"messages"`
+	RefreshToken    string            `json:"refreshToken,omitempty"`
 }
 
 type Store interface {
@@ -62,6 +66,7 @@ func (p Policy) Observe(s *State, o Observation, now time.Time) {
 		s.Confirmed = false
 		s.EventID = ""
 		s.Delivered = nil
+		s.XAttempts = 0
 		// A newly received sample establishes a new baseline, not an inferred outage.
 		s.Eligible = false
 	}
