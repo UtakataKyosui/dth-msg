@@ -148,9 +148,26 @@ npx wrangler@4.158.0 deploy
 
 Clerkモードでは上のGoogle用3シークレットの代わりに `CLERK_PUBLISHABLE_KEY`・`CLERK_JWT_KEY`・`CLERK_SECRET_KEY`・`OWNER_CLERK_USER_ID`・`PUBLIC_URL` を `secret put` で設定してください。端末と送信先は画面から登録できます。Discord連携を使う場合はDiscord用2シークレット、Xを使う場合は `ENABLE_X=true` も設定します。
 
-時間設定は`wrangler.toml`の`vars`で変更できます。ビルドは`make wasm`で自動実行します。Goランタイムは使用中のGoに付属する`wasm_exec.js`をコピーします。Go側の依存ライブラリはClerk公式SDKとその依存です。Wasmとビルド成果物はGit管理しません。WorkersのCPU・メモリ・圧縮コードサイズ・外部リクエスト数のプラン制限を確認してください。大量のページ取得や送信先では有料プランが必要になる場合があります。
+時間設定は`wrangler.toml`の`vars`で変更できます。ビルドは`make wasm`で自動実行します。Goランタイムは使用中のGoに付属する`wasm_exec.js`をコピーします。Go側の依存ライブラリはClerk公式SDKとその依存です。Wasmとビルド成果物はGit管理しません。WorkersのCPU・メモリ・非圧縮コードサイズ・外部リクエスト数のプラン制限を確認してください。大量のページ取得や送信先では有料プランが必要になる場合があります。
 
 ローカル確認は、上記変数を設定したGit管理対象外の`.dev.vars`を用意して`npx wrangler@4.158.0 dev --local`。デプロイせずバンドルだけ確認するには`npx wrangler@4.158.0 deploy --dry-run`。実際のGoogle認可・SNS配信には自分の資格情報が必要です。
+
+### Workerサイズの確認とCI
+
+2026-11-07に確認した[Cloudflare公式のWorkerサイズ制限](https://developers.cloudflare.com/workers/platform/limits/#worker-size)は、Free・Paidともに**非圧縮64 MiB（67,108,864バイト）**です。gzipサイズには上限がありません。Wasmだけでなく、Goランタイムを含むJavaScriptと追加モジュールの合計を判定します。圧縮後3 MB / 10 MBという以前の上限は現在の判定に使いません。
+
+```sh
+npm ci
+npm run check:worker-size
+```
+
+ロックファイルで固定したWrangler 4.158.0の`deploy --dry-run`で本番と同じ`make wasm`とバンドル処理を実行します。生成した全コードモジュールのバイト数を合計し、Wranglerの`Total Upload`と照合してから64 MiBを超えたら失敗します。ソースマップとWranglerが生成するREADMEはコードサイズに含めません。gzipは参考値として記録します。サイズ出力がない・モジュールが不足・集計結果がWranglerと一致しない場合も失敗させます。
+
+`build/worker-size.json`に全体・Wasm・各モジュールのサイズを記録します。厳しい独自上限を設ける場合は`WORKER_MAX_BYTES`でバイト数を指定できます（64 MiBを超える設定は不可）。GitHub ActionsのCIではGo/Node/Wranglerを指定したバージョンでビルドし、PRとmainへのpushでテスト・サイズ検査・実Wasmの認証検証を実行します。結果はActionsのサマリーとartifactに保存します。Cloudflareの資格情報は不要で、アップロード・デプロイは行いません。
+
+サイズ内でも、WorkersのCPU・メモリ・起動時間や実行時のAPI制限まで保証するものではありません。
+
+Workersでは管理APIの認証を本文の読み取りより先に実行し、本文は監視キューの外で読み取ります。設定本文は64 KiB、メッセージ本文は32 KiB、読み取り全体は10秒までです。送信を途中で止めたリクエストがあっても、後続の監視チェックを妨げません。状態へのアクセスと配信処理は引き続き直列化します。
 
 ## メッセージ登録・状態確認
 
@@ -192,6 +209,8 @@ make test
 go test -race ./...
 make build wasm
 node --test worker/bridge_test.mjs
+node --test scripts/worker-size.test.mjs
+npm run check:worker-size
 node worker/wasm_test.mjs build/monitor.wasm "$(go env GOROOT)/lib/wasm/wasm_exec.js"
 ```
 
